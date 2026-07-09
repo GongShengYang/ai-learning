@@ -1,0 +1,17 @@
+APIKEY
+sk-cad1be71e0274f8cae49c0e2cf124c36
+
+
+AccessKey ID
+LTAI5t8Y2Gn1845GTUFsy8sF
+
+AccessKey Secret
+Dz4SKyiYMAjSA0KQlZrmTywVr27wQJ
+
+
+
+阿里云百炼完整OpenAi地址是：
+https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+
+//生成向量地址是：
+https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings

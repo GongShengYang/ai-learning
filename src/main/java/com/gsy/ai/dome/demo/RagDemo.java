@@ -1,5 +1,6 @@
-package com.dome;
+package com.gsy.ai.dome.demo;
 
+import com.gsy.ai.dome.DO.DocumentChunk;
 import com.google.gson.*;
 import okhttp3.*;
 
@@ -15,32 +16,32 @@ import java.util.Scanner;
 import java.util.stream.Collectors;
 
 public class RagDemo {
-    private static final String API_KEY = "sk-cad1be71e0274f8cae49c0e2cf124c36";
-    private static final String EMBEDDING_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
-    private static final String LLM_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-    private static final OkHttpClient client = new OkHttpClient();
-    private static final Gson gson = new Gson();
+    public static final String API_KEY = "sk-cad1be71e0274f8cae49c0e2cf124c36";
+    public static final String EMBEDDING_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
+    public static final String LLM_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+    public static final OkHttpClient client = new OkHttpClient();
+    public static final Gson gson = new Gson();
 
-    private static List<float[]> vectors = new ArrayList<>();
-    private static List<String> chunks = new ArrayList<>();
+//    public static List<float[]> vectors = new ArrayList<>();
+//    public static List<String> chunks = new ArrayList<>();
+    public static List<DocumentChunk> documentChunkList = new ArrayList<>();
 
     public static void main(String[] args) throws Exception {
         // 1. 加载文档并切块（按段落）
         String text = loadDocument();
         System.out.println("文本长度: " + text.length());
         System.out.println("前50字符: " + text.substring(0, Math.min(50, text.length())));
-        List<String> chunkList = splitByParagraphs(text);
-        chunks.addAll(chunkList);
-        System.out.println("文档切分完成，共 " + chunks.size() + " 个片段");
+        splitByParagraphs(text);
+        System.out.println("文档切分完成，共 " + documentChunkList.size() + " 个片段");
 
         // 2. 为每个片段生成向量
-        for (int i = 0; i < chunks.size(); i++) {
-            System.out.println("生成向量 " + (i+1) + "/" + chunks.size());
-            float[] vec = getEmbedding(chunks.get(i));
+        for (int i = 0; i < documentChunkList.size(); i++) {
+            System.out.println("生成向量 " + (i+1) + "/" + documentChunkList.size());
+            float[] vec = getEmbedding(documentChunkList.get(i).getContent());
             if (vec != null) {
-                vectors.add(vec);
+                documentChunkList.get(i).setVector(vec);
             } else {
-                vectors.add(new float[0]); // 占位
+                documentChunkList.get(i).setVector(new float[0]);// 占位
             }
         }
 
@@ -69,7 +70,7 @@ public class RagDemo {
             // 合并片段（加上索引，便于调试）
             StringBuilder contextBuilder = new StringBuilder();
             for (int idx : topKIdx) {
-                String c = chunks.get(idx);
+                String c = documentChunkList.get(idx).getContent();
                 contextBuilder.append("【片段").append(idx).append("】\n").append(c).append("\n\n");
             }
             String context = contextBuilder.toString();
@@ -78,10 +79,10 @@ public class RagDemo {
             System.out.println("检索到 " + topKIdx.size() + " 个片段，相似度分数：");
             for (int i = 0; i < topKIdx.size(); i++) {
                 int idx = topKIdx.get(i);
-                float sim = cosineSimilarity(qVec, vectors.get(idx));
+                float sim = cosineSimilarity(qVec, documentChunkList.get(idx).getVector());
                 System.out.printf("  片段%d (idx=%d): 相似度%.4f\n", i+1, idx, sim);
             }
-            System.out.println("第一个片段预览: " + chunks.get(topKIdx.get(0)).substring(0, Math.min(80, chunks.get(topKIdx.get(0)).length())));
+            System.out.println("第一个片段预览: " + documentChunkList.get(topKIdx.get(0)).getContent().substring(0, Math.min(80, documentChunkList.get(topKIdx.get(0)).getContent().length())));
 
             String answer = askLLM(question, context);
             System.out.println("答: " + answer);
@@ -89,7 +90,7 @@ public class RagDemo {
         scanner.close();
     }
 
-    private static String loadDocument() throws IOException {
+    public static String loadDocument() throws IOException {
         Path path = Paths.get("C:\\Users\\Administrator\\Desktop\\test.txt");
         if (Files.exists(path)) {
             byte[] bytes = Files.readAllBytes(path);
@@ -106,27 +107,34 @@ public class RagDemo {
     }
 
     // 按段落切块，兼容 \n 和 \r\n
-    private static List<String> splitByParagraphs(String text) {
+    public static List<DocumentChunk> splitByParagraphs(String text) {
         // 先统一换行符为 \n，再按连续两个以上换行切分（保留单个换行）
         String normalized = text.replace("\r\n", "\n").replace("\r", "\n");
         // 按两个以上换行符切分（段落间空行）
         String[] paras = normalized.split("\n\n+");
-        List<String> result = new ArrayList<>();
         for (String p : paras) {
             p = p.trim();
-            if (!p.isEmpty()) result.add(p);
+            DocumentChunk documentChunk = new DocumentChunk();
+            if (!p.isEmpty()){
+                documentChunk.setContent(p);
+                documentChunkList.add(documentChunk);
+            }
         }
         // 如果没有空行分隔，退化为按单个换行切分
-        if (result.size() <= 1 && text.contains("\n")) {
-            result = Arrays.stream(normalized.split("\n"))
-                    .map(String::trim)
+        if (documentChunkList.size() <= 1 && text.contains("\n")) {
+            documentChunkList = Arrays.stream(normalized.split("\n"))
                     .filter(s -> !s.isEmpty())
+                    .map(s-> {
+                        DocumentChunk documentChunk = new DocumentChunk();
+                        documentChunk.setContent(s.trim());
+                        return documentChunk;
+                    })
                     .collect(Collectors.toList());
         }
-        return result;
+        return documentChunkList;
     }
 
-    private static float[] getEmbedding(String text) throws IOException {
+    public static float[] getEmbedding(String text) throws IOException {
         String json = "{\"model\":\"text-embedding-v3\",\"input\":\"" + escapeJson(text) + "\"}";
         Request request = new Request.Builder()
                 .url(EMBEDDING_URL)
@@ -154,7 +162,7 @@ public class RagDemo {
         }
     }
 
-    private static float cosineSimilarity(float[] a, float[] b) {
+    public static float cosineSimilarity(float[] a, float[] b) {
         if (a.length == 0 || b.length == 0 || a.length != b.length) return 0;
         float dot = 0, normA = 0, normB = 0;
         for (int i = 0; i < a.length; i++) {
@@ -166,13 +174,17 @@ public class RagDemo {
         return dot / (float) (Math.sqrt(normA) * Math.sqrt(normB));
     }
 
-    private static List<Integer> findTopKSimilar(float[] qVec, int k) {
+    public static List<Integer> findTopKSimilar(float[] qVec, int k) {
         // 计算所有相似度，排序
         List<SimItem> list = new ArrayList<>();
-        for (int i = 0; i < vectors.size(); i++) {
-            float[] v = vectors.get(i);
+        for (int i = 0; i < documentChunkList.size(); i++) {
+            float[] v = documentChunkList.get(i).getVector();
             if (v.length == 0) continue;
             float sim = cosineSimilarity(qVec, v);
+            if(sim < 0.75){
+                System.out.println("资料中没有相关内容");
+                continue;
+            }
             list.add(new SimItem(i, sim));
         }
         list.sort((a, b) -> Float.compare(b.sim, a.sim));
@@ -189,7 +201,7 @@ public class RagDemo {
         SimItem(int idx, float sim) { this.idx = idx; this.sim = sim; }
     }
 
-    private static String askLLM(String question, String context) throws IOException {
+    public static String askLLM(String question, String context) throws IOException {
         // 更宽松的 system prompt
         String systemPrompt = "你是一个智能助手，必须根据提供的多个资料片段回答问题。如果资料中直接包含答案，请直接引用；如果资料不完整，你可以基于已有信息进行合理推断，但不要编造完全无关的内容。如果资料中完全没有涉及，就说“资料中没有提到”。你可以总结、归纳，不必逐字重复。";
         String userPrompt = "以下是几个相关的资料片段：\n" + context + "\n请回答以下问题：" + question;
@@ -218,7 +230,7 @@ public class RagDemo {
         }
     }
 
-    private static String escapeJson(String s) {
+    public static String escapeJson(String s) {
         StringBuilder sb = new StringBuilder();
         for (char c : s.toCharArray()) {
             switch (c) {
