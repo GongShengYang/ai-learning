@@ -1,5 +1,6 @@
 package com.gsy.ai.service;
 
+import com.gsy.ai.dto.RagQuestionRequest;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -7,5 +8,5 @@ import java.io.IOException;
 
 public interface RagDemoService {
 
-    String getRagDemo(String question) throws IOException;
+    String getRagDemo(RagQuestionRequest request) throws IOException;
 }

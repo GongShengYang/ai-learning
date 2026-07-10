@@ -14,7 +14,7 @@ public interface VectorStore {
     /**
      * 向量检索 TopK
      */
-    List<ChunkWithVector> search(float[] queryVector, int topK);
+    List<ChunkWithVector> search(float[] queryVector, Long documentId, int topK);
 
     /**
      * 清空

@@ -4,11 +4,13 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.gsy.ai.rag.client.AiHttpClient;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.Resource;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +19,9 @@ import java.util.List;
 @Service
 public class EmbeddingService {
 
-    private final OkHttpClient client = new OkHttpClient();
+    @Resource(name = "embeddingAiHttpClient")
+    private AiHttpClient aiHttpClient;
+
     private final Gson gson = new Gson();
 
     @Value("${gsy.rag.embedding.url}")
@@ -74,47 +78,33 @@ public class EmbeddingService {
         body.addProperty("model", model);
         body.add("input", inputArr);
 
-        Request request = new Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Content-Type", "application/json")
-                .post(RequestBody.create(body.toString(), MediaType.parse("application/json")))
-                .build();
+        String resp = aiHttpClient.postJson(url, apiKey, body.toString());
 
-        try (Response response = client.newCall(request).execute()) {
-            String resp = response.body() == null ? "" : response.body().string();
+        JsonObject obj = JsonParser.parseString(resp).getAsJsonObject();
+        JsonArray data = obj.getAsJsonArray("data");
 
-            if (!response.isSuccessful()) {
-                log.error("Embedding 调用失败，状态码: {}, 响应: {}", response.code(), resp);
-                throw new IOException("Embedding API 返回错误: " + resp);
-            }
-
-            JsonObject obj = JsonParser.parseString(resp).getAsJsonObject();
-            JsonArray data = obj.getAsJsonArray("data");
-
-            if (data == null || data.size() == 0) {
-                throw new IOException("Embedding 返回数据为空");
-            }
-
-            if (data.size() != texts.size()) {
-                throw new IOException("Embedding 返回数量和输入数量不一致");
-            }
-
-            for (int i = 0; i < data.size(); i++) {
-                JsonArray embArr = data.get(i)
-                        .getAsJsonObject()
-                        .getAsJsonArray("embedding");
-
-                float[] vec = new float[embArr.size()];
-
-                for (int j = 0; j < embArr.size(); j++) {
-                    vec[j] = embArr.get(j).getAsFloat();
-                }
-
-                result.add(vec);
-            }
-
-            return result;
+        if (data == null || data.size() == 0) {
+            throw new IOException("Embedding 返回数据为空");
         }
+
+        if (data.size() != texts.size()) {
+            throw new IOException("Embedding 返回数量和输入数量不一致");
+        }
+
+        for (int i = 0; i < data.size(); i++) {
+            JsonArray embArr = data.get(i)
+                    .getAsJsonObject()
+                    .getAsJsonArray("embedding");
+
+            float[] vec = new float[embArr.size()];
+
+            for (int j = 0; j < embArr.size(); j++) {
+                vec[j] = embArr.get(j).getAsFloat();
+            }
+
+            result.add(vec);
+        }
+
+        return result;
     }
 }

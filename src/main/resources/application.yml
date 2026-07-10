@@ -54,7 +54,23 @@ gsy:
       model: text-embedding-v3
       api-key: sk-cad1be71e0274f8cae49c0e2cf124c36   # 你原来硬编码的key，先移到这里
       url: https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings
+      # OkHttp超时时间（秒）
+      connect-timeout: 30
+      read-timeout: 120
+      write-timeout: 60
+      call-timeout: 180
+
+      # 最大上下文长度（字符）
+      max-context-length: 6000
 
     llm:
       url: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       model: deepseek-v4-flash
+      # OkHttp超时时间（秒）
+      connect-timeout: 30
+      read-timeout: 120
+      write-timeout: 60
+      call-timeout: 180
+
+      # 最大上下文长度（字符）
+      max-context-length: 6000

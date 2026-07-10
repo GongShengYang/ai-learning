@@ -48,7 +48,7 @@ public class DatabaseVectorStore implements VectorStore {
      * 从数据库检索 TopK 相似 Chunk
      */
     @Override
-    public List<ChunkWithVector> search(float[] queryVector, int topK) {
+    public List<ChunkWithVector> search(float[] queryVector, Long documentId, int topK) {
         if (queryVector == null || queryVector.length == 0) {
             return List.of();
         }
@@ -60,6 +60,10 @@ public class DatabaseVectorStore implements VectorStore {
         LambdaQueryWrapper<DocumentChunkDO> wrapper = new LambdaQueryWrapper<>();
         wrapper.isNotNull(DocumentChunkDO::getVector)
                 .ne(DocumentChunkDO::getVector, "");
+        // 有documentId
+        if(documentId != null){
+            wrapper.eq(DocumentChunkDO::getDocumentId, documentId);
+        }
 
         List<DocumentChunkDO> chunkList = documentChunkMapper.selectList(wrapper);
 
@@ -80,16 +84,9 @@ public class DatabaseVectorStore implements VectorStore {
 
                 float score = cosineSimilarity(queryVector, chunkVector);
 
-                scoreItems.add(new ScoreItem(
-                        chunkDO,
-                        chunkVector,
-                        score
-                ));
+                scoreItems.add(new ScoreItem(chunkDO, chunkVector, score));
             } catch (Exception e) {
-                log.warn("解析Chunk向量失败，chunkId: {}, documentId: {}, 原因: {}",
-                        chunkDO.getId(),
-                        chunkDO.getDocumentId(),
-                        e.getMessage());
+                log.warn("解析Chunk向量失败，chunkId: {}, documentId: {}, 原因: {}", chunkDO.getId(), chunkDO.getDocumentId(), e.getMessage());
             }
         }
 
@@ -105,16 +102,16 @@ public class DatabaseVectorStore implements VectorStore {
             ScoreItem item = scoreItems.get(i);
             DocumentChunkDO chunkDO = item.getChunkDO();
 
-            result.add(new ChunkWithVector(
-                    chunkDO.getContent(),
-                    item.getVector(),
-                    chunkDO.getDocumentId(),
-                    chunkDO.getChunkIndex()
+            result.add(new ChunkWithVector(chunkDO.getContent(), item.getVector(), chunkDO.getDocumentId(), chunkDO.getChunkIndex(), item.getScore()
             ));
         }
 
-        log.info("数据库向量检索完成，总Chunk数: {}, 返回TopK: {}", chunkList.size(), result.size());
+        log.info("数据库向量检索完成，总Chunk数:{}, 返回TopK:{}", chunkList.size(), result.size());
 
+
+        for (ChunkWithVector chunk : result) {
+            log.info("命中文档 documentId={}, chunkIndex={}, score={}", chunk.getDocumentId(), chunk.getChunkIndex(), chunk.getScore());
+        }
         return result;
     }
 

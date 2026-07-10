@@ -1,6 +1,7 @@
 package com.gsy.ai.controller;
 
 import com.gsy.ai.common.Result;
+import com.gsy.ai.dto.RagQuestionRequest;
 import com.gsy.ai.service.RagDemoService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -8,26 +9,26 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.annotation.Resource;
+
 @Slf4j
 @RestController
 @RequestMapping("/ai/demo")
 public class RagDemoController {
 
-    private final RagDemoService ragDemoService;
+    @Resource
+    private RagDemoService ragDemoService;
 
-    public RagDemoController(RagDemoService ragDemoService) {
-        this.ragDemoService = ragDemoService;
-    }
 
     @PostMapping("/ragDemo")
-    public Result<String> ragDemo(@RequestBody String question) {
+    public Result<String> ragDemo(@RequestBody RagQuestionRequest ragQuestionRequest) {
         // Controller 只做基础校验和调用 Service
-        if (question == null || question.trim().isEmpty()) {
+        if (ragQuestionRequest.getQuestion() == null || ragQuestionRequest.getQuestion().trim().isEmpty()) {
             return Result.fail("问题不能为空");
         }
 
         try {
-            String answer = ragDemoService.getRagDemo(question);
+            String answer = ragDemoService.getRagDemo(ragQuestionRequest);
             return Result.success(answer);
         } catch (Exception e) {
             log.error("RAG问答异常", e);
