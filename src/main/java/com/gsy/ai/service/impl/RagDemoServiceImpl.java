@@ -2,20 +2,14 @@ package com.gsy.ai.service.impl;
 
 import com.gsy.ai.common.BusinessException;
 import com.gsy.ai.dto.RagQuestionRequest;
-import com.gsy.ai.rag.client.AiHttpClient;
-import com.gsy.ai.rag.embedding.EmbeddingService;
 import com.gsy.ai.rag.prompt.PromptTemplateService;
 import com.gsy.ai.rag.retriever.RetrieveRequest;
 import com.gsy.ai.rag.retriever.Retriever;
 import com.gsy.ai.rag.store.ChunkWithVector;
-import com.gsy.ai.rag.store.VectorStore;
 import com.gsy.ai.service.RagDemoService;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -31,23 +25,14 @@ public class RagDemoServiceImpl implements RagDemoService {
     @Resource
     private PromptTemplateService promptTemplateService;
 
-    @Resource(name = "llmAiHttpClient")
-    private AiHttpClient aiHttpClient;
-
-    @Value("${gsy.rag.llm.url}")
-    private String llmUrl;
-
-    @Value("${gsy.rag.llm.model}")
-    private String llmModel;
-
-    @Value("${gsy.rag.embedding.api-key}")
-    private String apiKey;
+    private final ChatClient chatClient;
 
     @Value("${gsy.rag.llm.max-context-length}")
     private int maxContextLength;
 
-    public RagDemoServiceImpl(Retriever retriever) {
+    public RagDemoServiceImpl(Retriever retriever, ChatClient chatClient){
         this.retriever = retriever;
+        this.chatClient = chatClient;
     }
 
     @Override
@@ -106,31 +91,10 @@ public class RagDemoServiceImpl implements RagDemoService {
     }
 
     private String callLLM(String question, String context) throws IOException {
-        String systemPrompt = promptTemplateService.getSystemPrompt();
-        String userPrompt = promptTemplateService.getUserPrompt(question , context);
-        JsonObject body = new JsonObject();
-        body.addProperty("model", llmModel);
-        JsonArray messages = new JsonArray();
-        messages.add(createMessage("system", systemPrompt));
-        messages.add(createMessage("user", userPrompt));
-        body.add("messages", messages);
-        body.addProperty("stream", false);
+        return chatClient.prompt()
+                .system(promptTemplateService.getSystemPrompt()).user(promptTemplateService.getUserPrompt(question,context))
+                .call()
+                .content();
 
-        String resp = aiHttpClient.postJson(llmUrl, apiKey, body.toString());
-
-        JsonObject obj = JsonParser.parseString(resp).getAsJsonObject();
-
-        return obj.getAsJsonArray("choices")
-                .get(0).getAsJsonObject()
-                .getAsJsonObject("message")
-                .get("content").getAsString();
-
-    }
-
-    private JsonObject createMessage(String role, String content) {
-        JsonObject msg = new JsonObject();
-        msg.addProperty("role", role);
-        msg.addProperty("content", content);
-        return msg;
     }
 }

@@ -1,6 +1,7 @@
 package com.gsy.ai.controller;
 
 import com.gsy.ai.common.Result;
+import com.gsy.ai.rag.store.VectorStore;
 import com.gsy.ai.service.DocumentImportService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,8 @@ public class DocumentController {
 
     @Resource
     private DocumentImportService documentImportService;
+    @Resource
+    private VectorStore vectorStore;
 
     @PostMapping("/import")
     public Result<Map<String, Object>> importDocument(@RequestParam("file") MultipartFile file) {
@@ -34,4 +37,5 @@ public class DocumentController {
             return Result.fail("导入失败: " + e.getMessage());
         }
     }
+
 }

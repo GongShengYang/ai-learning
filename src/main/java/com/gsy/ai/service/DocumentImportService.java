@@ -8,6 +8,9 @@ import com.gsy.ai.rag.chunk.ChunkStrategy;
 import com.gsy.ai.rag.embedding.EmbeddingService;
 import com.gsy.ai.rag.parser.*;
 import com.google.gson.Gson;
+import com.gsy.ai.rag.store.ChunkWithVector;
+import com.gsy.ai.rag.store.MilvusVectorStore;
+import com.gsy.ai.rag.store.VectorStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -21,8 +24,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -46,10 +47,10 @@ public class DocumentImportService {
     @Value("${gsy.file.upload-path}")
     private String uploadPath;
 
-    private final Gson gson = new Gson();
+    @Resource
+    private VectorStore vectorStore;
 
-    // 用于临时保存Zip解析结果
-    private final Map<String, byte[]> tempFileCache = new ConcurrentHashMap<>();
+    private final Gson gson = new Gson();
 
     @Transactional
     public Long importDocument(MultipartFile file) throws Exception {
@@ -71,7 +72,6 @@ public class DocumentImportService {
         byte[] fileBytes = Files.readAllBytes(targetPath);
         // 构造内存中的 MultipartFile（用于其他 Parser）
         MultipartFile memoryFile = new ByteArrayMultipartFile(originalName, fileBytes);
-        // -------------------------------------------------------
 
         // 2. 创建 Document 记录（使用原始 file 的大小）
         DocumentDO doc = new DocumentDO();
@@ -124,7 +124,39 @@ public class DocumentImportService {
                 chunkDOs.add(chunkDO);
             }
 
-            documentChunkService.saveBatch(chunkDOs);
+            boolean saved = documentChunkService.saveBatch(chunkDOs);
+
+            if (!saved) {
+                throw new BusinessException("文档切片保存失败");
+            }
+
+            List<ChunkWithVector> milvusChunks = new ArrayList<>(chunkDOs.size());
+
+            for (int i = 0; i < chunkDOs.size(); i++) {
+
+                DocumentChunkDO chunkDO = chunkDOs.get(i);
+
+                if (chunkDO.getId() == null) {
+                    throw new BusinessException(
+                            "文档切片保存后主键未回填，chunkIndex="
+                                    + chunkDO.getChunkIndex()
+                    );
+                }
+
+                ChunkWithVector milvusChunk =
+                        new ChunkWithVector(
+                                chunkDO.getId(),
+                                chunkDO.getContent(),
+                                vectors.get(i),
+                                chunkDO.getDocumentId(),
+                                chunkDO.getChunkIndex(),
+                                null
+                        );
+
+                milvusChunks.add(milvusChunk);
+            }
+
+            vectorStore.addBatch(milvusChunks);
 
             // 7. 更新Document状态
             doc.setChunkCount(chunkDOs.size());

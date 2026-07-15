@@ -15,8 +15,7 @@ import java.util.Comparator;
 import java.util.List;
 
 @Slf4j
-@Primary
-@Component
+//@Component
 public class DatabaseVectorStore implements VectorStore {
 
     private final DocumentChunkMapper documentChunkMapper;
@@ -102,8 +101,7 @@ public class DatabaseVectorStore implements VectorStore {
             ScoreItem item = scoreItems.get(i);
             DocumentChunkDO chunkDO = item.getChunkDO();
 
-            result.add(new ChunkWithVector(chunkDO.getContent(), item.getVector(), chunkDO.getDocumentId(), chunkDO.getChunkIndex(), item.getScore()
-            ));
+            result.add(new ChunkWithVector(chunkDO.getId(),chunkDO.getContent(), item.getVector(), chunkDO.getDocumentId(), chunkDO.getChunkIndex(), item.getScore()));
         }
 
         log.info("数据库向量检索完成，总Chunk数:{}, 返回TopK:{}", chunkList.size(), result.size());
@@ -121,6 +119,11 @@ public class DatabaseVectorStore implements VectorStore {
     @Override
     public void clear() {
         log.warn("DatabaseVectorStore.clear 当前阶段不执行，避免误删数据库文档切片");
+    }
+
+    @Override
+    public void deleteByChunkId(Long chunkId) {
+        documentChunkMapper.deleteById(chunkId);
     }
 
     private float cosineSimilarity(float[] a, float[] b) {
