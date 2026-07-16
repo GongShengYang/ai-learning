@@ -72,5 +72,8 @@ gsy:
       # 最大上下文长度（字符）
       max-context-length: 6000
 
+    retrieval:
+      min-score: 0.55
+
   milvus:
     uri: http://localhost:19530

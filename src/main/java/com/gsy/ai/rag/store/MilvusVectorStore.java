@@ -14,6 +14,7 @@ import io.milvus.v2.service.vector.response.SearchResp;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -38,6 +39,9 @@ public class MilvusVectorStore implements VectorStore {
     private final MilvusClientV2 milvusClient;
 
     private final DocumentChunkMapper documentChunkMapper;
+
+    @Value("${gsy.rag.retrieval.min-score:0.55}")
+    private float minScore;
 
     private final Gson gson = new Gson();
 
@@ -219,48 +223,48 @@ public class MilvusVectorStore implements VectorStore {
         Map<Long, Float> scoreMap =
                 new LinkedHashMap<>();
 
-        for (SearchResp.SearchResult searchResult
-                : firstResultGroup) {
+        for (SearchResp.SearchResult searchResult : firstResultGroup) {
 
-            Long chunkId =
-                    convertToLong(
-                            searchResult.getId()
-                    );
+            Long chunkId = convertToLong(searchResult.getId());
 
             if (chunkId == null) {
-                log.warn(
-                        "Milvus 搜索结果主键无法转换，id={}",
-                        searchResult.getId()
-                );
+                log.warn("Milvus 搜索结果主键无法转换，id={}", searchResult.getId());
                 continue;
             }
 
-            scoreMap.put(
-                    chunkId,
-                    searchResult.getScore()
-            );
+            Float score = searchResult.getScore();
+
+            if (score == null) {
+                log.warn("Milvus 搜索结果分数为空，chunkId={}", chunkId);
+                continue;
+            }
+
+            if (score < minScore) {
+                log.info("Milvus 检索结果低于相似度阈值，已过滤，chunkId={}, score={}, minScore={}", chunkId, score, minScore);
+                continue;
+            }
+
+            scoreMap.put(chunkId, searchResult.getScore());
         }
 
         if (scoreMap.isEmpty()) {
+            log.info(
+                    "Milvus 检索结果全部低于相似度阈值，documentId={}, minScore={}",
+                    documentId,
+                    minScore
+            );
             return List.of();
         }
 
-        List<Long> chunkIds =
-                new ArrayList<>(
-                        scoreMap.keySet()
-                );
+        List<Long> chunkIds = new ArrayList<>(scoreMap.keySet());
 
         /*
          * 一次性批量查询 MySQL，
          * 不要在循环中 selectById，避免 N+1 查询。
          */
-        List<DocumentChunkDO> chunkDOList =
-                documentChunkMapper.selectBatchIds(
-                        chunkIds
-                );
+        List<DocumentChunkDO> chunkDOList = documentChunkMapper.selectBatchIds(chunkIds);
 
-        if (chunkDOList == null
-                || chunkDOList.isEmpty()) {
+        if (chunkDOList == null || chunkDOList.isEmpty()) {
 
             log.warn(
                     "Milvus 命中向量，但 MySQL 未查询到对应 Chunk，chunkIds={}",
