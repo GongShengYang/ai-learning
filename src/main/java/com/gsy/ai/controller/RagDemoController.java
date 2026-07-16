@@ -2,6 +2,7 @@ package com.gsy.ai.controller;
 
 import com.gsy.ai.common.Result;
 import com.gsy.ai.dto.RagQuestionRequest;
+import com.gsy.ai.dto.rag.RagAnswerResponse;
 import com.gsy.ai.service.RagDemoService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,15 +22,14 @@ public class RagDemoController {
 
 
     @PostMapping("/ragDemo")
-    public Result<String> ragDemo(@RequestBody RagQuestionRequest ragQuestionRequest) {
+    public Result<RagAnswerResponse> ragDemo(@RequestBody RagQuestionRequest ragQuestionRequest) {
         // Controller 只做基础校验和调用 Service
         if (ragQuestionRequest.getQuestion() == null || ragQuestionRequest.getQuestion().trim().isEmpty()) {
             return Result.fail("问题不能为空");
         }
 
         try {
-            String answer = ragDemoService.getRagDemo(ragQuestionRequest);
-            return Result.success(answer);
+            return Result.success(ragDemoService.getRagDemo(ragQuestionRequest));
         } catch (Exception e) {
             log.error("RAG问答异常", e);
             // 这里会被 GlobalExceptionHandler 统一处理，但为了保持兼容，也返回 Result

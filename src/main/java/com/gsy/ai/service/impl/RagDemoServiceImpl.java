@@ -2,6 +2,8 @@ package com.gsy.ai.service.impl;
 
 import com.gsy.ai.common.BusinessException;
 import com.gsy.ai.dto.RagQuestionRequest;
+import com.gsy.ai.dto.rag.RagAnswerResponse;
+import com.gsy.ai.dto.rag.RagSourceInfo;
 import com.gsy.ai.rag.prompt.PromptTemplateService;
 import com.gsy.ai.rag.retriever.RetrieveRequest;
 import com.gsy.ai.rag.retriever.Retriever;
@@ -36,7 +38,7 @@ public class RagDemoServiceImpl implements RagDemoService {
     }
 
     @Override
-    public String getRagDemo(RagQuestionRequest request) throws IOException {
+    public RagAnswerResponse getRagDemo(RagQuestionRequest request) throws IOException {
         String question = request.getQuestion();
         // 1. 参数校验
         if (question == null || question.trim().isEmpty()) {
@@ -54,7 +56,10 @@ public class RagDemoServiceImpl implements RagDemoService {
 
         if (chunks.isEmpty()) {
             log.info("未找到相关文档片段，问题: {}", question);
-            return "未找到相关文档片段";
+            return new RagAnswerResponse(
+                    "未找到相关文档片段",
+                    null
+            );
         }
 
         // 4. 构建上下文
@@ -64,7 +69,23 @@ public class RagDemoServiceImpl implements RagDemoService {
         // 5. 调用 LLM
         String answer = callLLM(question, context);
         log.info("RAG回答生成成功，长度: {}", answer.length());
-        return answer;
+        List<RagSourceInfo> sources =
+                chunks.stream()
+                        .map(item ->
+                                new RagSourceInfo(
+                                        item.getChunkId(),
+                                        item.getDocumentId(),
+                                        item.getChunkIndex(),
+                                        item.getScore(),
+                                        item.getContent()
+                                )
+                        )
+                        .toList();
+
+        return new RagAnswerResponse(
+                answer,
+                sources
+        );
     }
 
     private String buildContext(List<ChunkWithVector> chunks) {
