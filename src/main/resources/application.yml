@@ -52,7 +52,7 @@ logging:
   level:
     root: info
     com.gsy: debug
-
+    org.springframework.ai.chat.client: DEBUG
 # 自定义配置
 gsy:
   file:

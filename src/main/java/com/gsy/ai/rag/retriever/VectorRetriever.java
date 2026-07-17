@@ -44,8 +44,7 @@ public class VectorRetriever implements Retriever {
             return List.of();
         }
 
-        return vectorStore.search(queryVector, request.getDocumentId(), request.getTopK()
-        );
+        return vectorStore.search(queryVector, request.getDocumentId(), request.getTopK());
 
     }
 
