@@ -63,6 +63,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         if (records == null || records.isEmpty()) {
             return Collections.emptyList();
         }
+        if (ChatMessageRole.ASSISTANT.getCode().equals(records.get(0).getRole())) {
+            records.remove(0);
+        }
 
         /*
          * 第二步：反转顺序。
