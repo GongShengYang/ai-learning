@@ -1,16 +1,10 @@
 package com.gsy.ai.agent.tool;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
-import com.gsy.ai.entity.DocumentDO;
-import com.gsy.ai.mapper.DocumentMapper;
-import com.gsy.ai.rag.retriever.Retriever;
+import com.gsy.ai.document.entity.DocumentDO;
+import com.gsy.ai.document.mapper.DocumentMapper;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
-
-import javax.swing.text.Document;
-import java.util.List;
 
 @Component
 public class DocumentQueryTool {
@@ -30,6 +24,7 @@ public class DocumentQueryTool {
                                    知识库规模时调用。
                         """)
     public String DocumentQueryTool() {
+        System.out.println("DocumentQueryTool" );
         Long l = documentMapper.selectCount(new QueryWrapper<DocumentDO>());
         return "当前知识库共有"
                 + l

@@ -1,9 +1,9 @@
 package com.gsy.ai.agent.tool;
 
 
-import com.gsy.ai.rag.retriever.RetrieveRequest;
-import com.gsy.ai.rag.retriever.Retriever;
-import com.gsy.ai.rag.store.ChunkWithVector;
+import com.gsy.ai.document.rag.retriever.RetrieveRequest;
+import com.gsy.ai.document.rag.retriever.Retriever;
+import com.gsy.ai.document.rag.store.ChunkWithVector;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -35,7 +35,7 @@ public class RagSearchTool {
      */
     @Tool(description = "查询企业知识库。 当用户询问公司制度、 文档内容、 业务规则、 技术资料时调用该工具。 ")
     public String searchKnowledge(String question) {
-
+        System.out.println("searchKnowledge 参数是：" + question);
         RetrieveRequest request = new RetrieveRequest();
 
         request.setQuestion(question);

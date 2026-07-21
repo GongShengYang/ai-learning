@@ -2,7 +2,7 @@ package com.gsy.ai.config;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.gsy.ai.rag.embedding.EmbeddingService;
+import com.gsy.ai.document.rag.embedding.EmbeddingService;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.service.collection.request.AddFieldReq;
