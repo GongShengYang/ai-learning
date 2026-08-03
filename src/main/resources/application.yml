@@ -78,7 +78,7 @@ gsy:
     llm:
       api-key: ${DASHSCOPE_API_KEY}
       # 最大上下文长度（字符）
-      max-context-length: 6000s
+      max-context-length: 6000
 
     retrieval:
       min-score: 0.55
