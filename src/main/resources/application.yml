@@ -53,6 +53,14 @@ logging:
     root: info
     com.gsy: debug
     org.springframework.ai.chat.client: DEBUG
+    org.springframework.ai.openai: TRACE
+    org.springframework.web.client: TRACE
+    org.springframework.web.client.RestClient: TRACE
+    org.springframework.web.client.DefaultRestClient: TRACE
+    org.springframework.http.client: TRACE
+
+
+
 # 自定义配置
 gsy:
   file:
@@ -70,7 +78,7 @@ gsy:
     llm:
       api-key: ${DASHSCOPE_API_KEY}
       # 最大上下文长度（字符）
-      max-context-length: 6000
+      max-context-length: 6000s
 
     retrieval:
       min-score: 0.55
