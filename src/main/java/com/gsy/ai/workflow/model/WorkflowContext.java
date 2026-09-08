@@ -34,6 +34,12 @@ public class WorkflowContext {
     /** 路由节点最终决定执行的分支。 */
     private QuestionIntent route;
 
+    /** 只有复合任务才会生成计划；普通单步骤问题保持为null。 */
+    private WorkflowPlan plan;
+
+    /** Executor按顺序保存每个计划步骤的结果，供最终汇总回答使用。 */
+    private final List<WorkflowPlanStepResult> planStepResults = new ArrayList<>();
+
     /** 执行节点生成的最终回答。 */
     private String answer;
 

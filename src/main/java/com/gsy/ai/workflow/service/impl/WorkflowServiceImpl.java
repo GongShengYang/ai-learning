@@ -17,7 +17,10 @@ import com.gsy.ai.workflow.enums.WorkflowNode;
 import com.gsy.ai.workflow.enums.WorkflowStatus;
 import com.gsy.ai.workflow.exception.WorkflowNodeTimeoutException;
 import com.gsy.ai.workflow.model.WorkflowContext;
+import com.gsy.ai.workflow.model.WorkflowPlanStep;
+import com.gsy.ai.workflow.model.WorkflowPlanStepResult;
 import com.gsy.ai.workflow.model.WorkflowStepRecord;
+import com.gsy.ai.workflow.service.WorkflowPlannerService;
 import com.gsy.ai.workflow.service.WorkflowService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -60,6 +63,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final ChatClient chatClient;
     private final ConversationService conversationService;
     private final ChatMessageService chatMessageService;
+    private final WorkflowPlannerService workflowPlannerService;
     private final ExecutorService workflowNodeExecutor;
 
     /** 会话创建、历史读取和消息保存节点的最大等待时间。 */
@@ -69,6 +73,10 @@ public class WorkflowServiceImpl implements WorkflowService {
     /** 意图分类节点最多等待时间，配置单位为毫秒。 */
     @Value("${gsy.workflow.timeout.intent-classification-ms:30000}")
     private long intentClassificationTimeoutMs;
+
+    /** 复合任务规划节点最多等待时间，配置单位为毫秒。 */
+    @Value("${gsy.workflow.timeout.task-planning-ms:30000}")
+    private long taskPlanningTimeoutMs;
 
     /** Java路由节点最多等待时间，配置单位为毫秒。 */
     @Value("${gsy.workflow.timeout.route-decision-ms:1000}")
@@ -84,6 +92,7 @@ public class WorkflowServiceImpl implements WorkflowService {
                                ChatClient chatClient,
                                ConversationService conversationService,
                                ChatMessageService chatMessageService,
+                               WorkflowPlannerService workflowPlannerService,
                                @Qualifier("workflowNodeExecutor") ExecutorService workflowNodeExecutor) {
         this.structuredOutputService = structuredOutputService;
         this.retriever = retriever;
@@ -91,6 +100,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         this.chatClient = chatClient;
         this.conversationService = conversationService;
         this.chatMessageService = chatMessageService;
+        this.workflowPlannerService = workflowPlannerService;
         this.workflowNodeExecutor = workflowNodeExecutor;
     }
 
@@ -111,7 +121,12 @@ public class WorkflowServiceImpl implements WorkflowService {
             executeNode(context, WorkflowNode.INTENT_CLASSIFICATION, () -> classifyIntent(context));
             /** 根据意图和置信度，由Java确定唯一执行分支。 */
             executeNode(context, WorkflowNode.ROUTE_DECISION, () -> decideRoute(context));
-            /** 只执行Java路由选中的分支，不再让模型二次选择。 */
+            // 普通问题已经有唯一分支，不需要额外调用Planner，避免增加延迟和Token消耗。
+            if (context.getRoute() == QuestionIntent.COMPOSITE_TASK) {
+                /** 复合任务由模型拆成2到3步，再由Java校验动作白名单。 */
+                executeNode(context, WorkflowNode.TASK_PLANNING, () -> createPlan(context));
+            }
+            /** 普通任务执行唯一分支；复合任务由Executor依次执行计划中的步骤。 */
             executeNode(context, WorkflowNode.ROUTE_EXECUTION, () -> executeRoute(context));
             /** 只在回答成功生成后保存助手消息，并更新会话最后活跃时间。 */
             executeNode(context, WorkflowNode.ASSISTANT_MESSAGE_PERSISTENCE, () -> saveAssistantMessage(context));
@@ -130,6 +145,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         Double confidence = intentResult == null ? null : intentResult.getConfidence();
         WorkflowNode failedNode = context.getStatus() == WorkflowStatus.FAILED ? context.getCurrentNode() : null;
         return new WorkflowQuestionResponse(context.getConversationId(), intent, confidence, context.getRoute(),
+                context.getPlan(), List.copyOf(context.getPlanStepResults()),
                 context.getStatus(), failedNode, context.getErrorMessage(),
                 List.copyOf(context.getExecutionTrace()), context.getAnswer());
     }
@@ -240,6 +256,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             case CONVERSATION_PREPARATION, USER_MESSAGE_PERSISTENCE, ASSISTANT_MESSAGE_PERSISTENCE -> memoryTimeoutMs;
             case INTENT_CLASSIFICATION -> intentClassificationTimeoutMs;
             case ROUTE_DECISION -> routeDecisionTimeoutMs;
+            case TASK_PLANNING -> taskPlanningTimeoutMs;
             case ROUTE_EXECUTION -> routeExecutionTimeoutMs;
         };
         return Math.max(timeoutMs, 1L);
@@ -256,6 +273,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             case USER_MESSAGE_PERSISTENCE -> "用户消息保存失败";
             case INTENT_CLASSIFICATION -> "问题意图识别失败";
             case ROUTE_DECISION -> "问题路由决策失败";
+            case TASK_PLANNING -> "复合任务规划失败";
             case ROUTE_EXECUTION -> "问题处理分支执行失败";
             case ASSISTANT_MESSAGE_PERSISTENCE -> "助手消息保存失败";
         };
@@ -268,6 +286,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             case USER_MESSAGE_PERSISTENCE -> "用户消息保存超时";
             case INTENT_CLASSIFICATION -> "问题意图识别超时";
             case ROUTE_DECISION -> "问题路由决策超时";
+            case TASK_PLANNING -> "复合任务规划超时";
             case ROUTE_EXECUTION -> "问题处理分支执行超时";
             case ASSISTANT_MESSAGE_PERSISTENCE -> "助手消息保存超时";
         };
@@ -286,6 +305,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             case USER_MESSAGE_PERSISTENCE -> "你的问题暂时无法保存，请稍后重试。";
             case INTENT_CLASSIFICATION -> "暂时无法识别你的问题，请稍后重试或补充更明确的描述。";
             case ROUTE_DECISION -> "问题已经识别，但暂时无法选择处理方式，请稍后重试。";
+            case TASK_PLANNING -> "问题包含多个任务，但暂时无法生成执行计划，请稍后重试。";
             case ROUTE_EXECUTION -> getRouteFallback(context.getRoute());
             // 回答已经生成但保存失败时，保留原回答，通过status和errorMessage告知保存异常。
             case ASSISTANT_MESSAGE_PERSISTENCE -> StringUtils.hasText(context.getAnswer())
@@ -302,6 +322,7 @@ public class WorkflowServiceImpl implements WorkflowService {
         return switch (route) {
             case KNOWLEDGE_SEARCH -> "知识库查询暂时不可用，请稍后重试。";
             case DOCUMENT_COUNT -> "文档统计服务暂时不可用，请稍后重试。";
+            case COMPOSITE_TASK -> "复合任务执行暂时不可用，请稍后重试。";
             case GENERAL_CHAT -> "模型问答服务暂时不可用，请稍后重试。";
             case UNSUPPORTED -> "抱歉，我暂时无法确认你的意图，请补充更明确的描述。";
         };
@@ -312,6 +333,12 @@ public class WorkflowServiceImpl implements WorkflowService {
         String classificationQuestion = buildClassificationQuestion(context);
         QuestionIntentResult intentResult = structuredOutputService.classifyQuestion(classificationQuestion);
         context.setIntentResult(intentResult);
+    }
+
+    /** Planner读取当前问题和少量最近历史，把复合目标拆成Java可以校验、执行的结构化步骤。 */
+    private void createPlan(WorkflowContext context) {
+        String planningQuestion = buildClassificationQuestion(context);
+        context.setPlan(workflowPlannerService.createPlan(planningQuestion));
     }
 
     /**
@@ -372,16 +399,80 @@ public class WorkflowServiceImpl implements WorkflowService {
         String answer = switch (context.getRoute()) {
             case KNOWLEDGE_SEARCH -> answerByKnowledge(context);
             case DOCUMENT_COUNT -> answerByDocumentCount();
+            case COMPOSITE_TASK -> answerByCompositeTask(context);
             case GENERAL_CHAT -> answerByGeneralChat(context);
             case UNSUPPORTED -> "抱歉，我暂时无法确认你的意图，请补充更明确的描述。";
         };
         context.setAnswer(answer);
     }
 
+    /**
+     * Executor不让模型直接调用任意方法，而是按计划顺序把action映射到受控Java分支。
+     * 整个ROUTE_EXECUTION重试时先清空上次的部分结果，避免响应中出现重复步骤。
+     */
+    private String answerByCompositeTask(WorkflowContext context) {
+        if (context.getPlan() == null || context.getPlan().getSteps() == null) {
+            throw new BusinessException("复合任务缺少执行计划");
+        }
+        context.getPlanStepResults().clear();
+
+        for (WorkflowPlanStep step : context.getPlan().getSteps()) {
+            WorkflowPlanStepResult stepResult = new WorkflowPlanStepResult(
+                    step.getStepNumber(), step.getAction(), step.getInstruction(),
+                    WorkflowStatus.RUNNING, null, null);
+            context.getPlanStepResults().add(stepResult);
+            try {
+                String result = switch (step.getAction()) {
+                    case KNOWLEDGE_SEARCH -> answerByKnowledge(context, step.getInstruction());
+                    case DOCUMENT_COUNT -> answerByDocumentCount();
+                    case GENERAL_CHAT -> answerByGeneralChat(context, step.getInstruction());
+                };
+                stepResult.setResult(result);
+                stepResult.setStatus(WorkflowStatus.SUCCESS);
+            } catch (RuntimeException e) {
+                stepResult.setStatus(WorkflowStatus.FAILED);
+                stepResult.setErrorMessage("计划第" + step.getStepNumber() + "步执行失败");
+                throw e;
+            }
+        }
+        return composePlanAnswer(context);
+    }
+
+    /** 所有步骤完成后由模型统一组织语言，避免把多个孤立结果直接拼接给用户。 */
+    private String composePlanAnswer(WorkflowContext context) {
+        StringBuilder resultText = new StringBuilder();
+        for (WorkflowPlanStepResult stepResult : context.getPlanStepResults()) {
+            resultText.append("步骤").append(stepResult.getStepNumber())
+                    .append("（").append(stepResult.getInstruction()).append("）结果：")
+                    .append(stepResult.getResult()).append(System.lineSeparator());
+        }
+        String answer = chatClient.prompt()
+                .system("你是企业智能助手。请严格依据各步骤结果回答，不得编造，不要向用户暴露Planner、Executor等内部术语。")
+                .user("""
+                        用户原始问题：%s
+
+                        已完成的步骤结果：
+                        %s
+
+                        请整合为一段完整、清晰的最终回答，并确保用户提出的每个子任务都有对应答案。
+                        """.formatted(context.getQuestion(), resultText))
+                .call()
+                .content();
+        if (!StringUtils.hasText(answer)) {
+            throw new BusinessException("复合任务汇总回答生成失败");
+        }
+        return answer;
+    }
+
     /** 知识库检索后，把历史消息、检索资料和当前问题一起交给模型生成回答。 */
     private String answerByKnowledge(WorkflowContext context) {
+        return answerByKnowledge(context, context.getQuestion());
+    }
+
+    /** 复合任务执行时使用子步骤instruction检索，避免每一步都拿原始复合问题查询。 */
+    private String answerByKnowledge(WorkflowContext context, String question) {
         RetrieveRequest request = new RetrieveRequest();
-        request.setQuestion(context.getQuestion());
+        request.setQuestion(question);
         request.setDocumentId(null);
         request.setTopK(KNOWLEDGE_TOP_K);
 
@@ -409,7 +500,7 @@ public class WorkflowServiceImpl implements WorkflowService {
                         %s
 
                         当前用户问题：%s
-                        """.formatted(buildContext(chunks), context.getQuestion()))
+                        """.formatted(buildContext(chunks), question))
                 .call()
                 .content();
         if (!StringUtils.hasText(answer)) {
@@ -437,11 +528,16 @@ public class WorkflowServiceImpl implements WorkflowService {
 
     /** 普通聊天也携带当前会话历史，让模型能够理解连续追问。 */
     private String answerByGeneralChat(WorkflowContext context) {
+        return answerByGeneralChat(context, context.getQuestion());
+    }
+
+    /** 复合任务执行时只处理当前计划步骤，不把整个复合问题重复交给模型。 */
+    private String answerByGeneralChat(WorkflowContext context, String question) {
         ChatClient.ChatClientRequestSpec requestSpec = chatClient.prompt()
                 .system("你是企业智能助手，请结合相关历史对话，简洁准确地回答当前问题。");
         addHistory(requestSpec, context.getHistoryMessages());
 
-        String answer = requestSpec.user(context.getQuestion()).call().content();
+        String answer = requestSpec.user(question).call().content();
         if (!StringUtils.hasText(answer)) {
             throw new BusinessException("普通问答生成失败");
         }

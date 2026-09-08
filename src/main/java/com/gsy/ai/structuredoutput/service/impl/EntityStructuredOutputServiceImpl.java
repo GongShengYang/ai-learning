@@ -23,8 +23,9 @@ public class EntityStructuredOutputServiceImpl implements EntityStructuredOutput
             分类规则：
             1. KNOWLEDGE_SEARCH：查询知识库正文、项目资料、制度、技术记录或解决方案，needTool=true。
             2. DOCUMENT_COUNT：查询知识库文档数量或规模，needTool=true。
-            3. GENERAL_CHAT：无需企业知识库即可回答的一般交流或通用知识，needTool=false。
-            4. UNSUPPORTED：意图不清、无法处理或不属于以上类型，needTool=false。
+            3. COMPOSITE_TASK：同一个问题包含两个或以上子任务，且至少一个需要知识库或文档统计，needTool=true。
+            4. GENERAL_CHAT：无需企业知识库即可回答的一般交流或通用知识，needTool=false。
+            5. UNSUPPORTED：意图不清、无法处理或不属于以上类型，needTool=false。
             """;
 
     private final ChatClient chatClient;
@@ -77,7 +78,8 @@ public class EntityStructuredOutputServiceImpl implements EntityStructuredOutput
         }
 
         boolean expectedNeedTool = result.getIntent() == QuestionIntent.KNOWLEDGE_SEARCH
-                || result.getIntent() == QuestionIntent.DOCUMENT_COUNT;
+                || result.getIntent() == QuestionIntent.DOCUMENT_COUNT
+                || result.getIntent() == QuestionIntent.COMPOSITE_TASK;
         if (result.getNeedTool() != expectedNeedTool) {
             throw new BusinessException("模型分类结果中的intent与needTool不一致");
         }

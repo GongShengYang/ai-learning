@@ -3,6 +3,8 @@ package com.gsy.ai.workflow.dto;
 import com.gsy.ai.structuredoutput.enums.QuestionIntent;
 import com.gsy.ai.workflow.enums.WorkflowNode;
 import com.gsy.ai.workflow.enums.WorkflowStatus;
+import com.gsy.ai.workflow.model.WorkflowPlan;
+import com.gsy.ai.workflow.model.WorkflowPlanStepResult;
 import com.gsy.ai.workflow.model.WorkflowStepRecord;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -24,6 +26,12 @@ public class WorkflowQuestionResponse {
 
     /** 实际执行的路由分支，低置信度时可能与intent不同。 */
     private QuestionIntent route;
+
+    /** 复合任务的执行计划；普通问题不需要规划，因此为null。 */
+    private WorkflowPlan plan;
+
+    /** 复合任务每一步的实际执行结果；普通问题返回空列表。 */
+    private List<WorkflowPlanStepResult> planStepResults;
 
     /** 整个Workflow最终状态。 */
     private WorkflowStatus status;

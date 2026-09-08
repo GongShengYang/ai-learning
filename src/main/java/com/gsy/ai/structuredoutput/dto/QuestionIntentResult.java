@@ -18,7 +18,7 @@ public class QuestionIntentResult {
     private QuestionIntent intent;
 
     /** needTool：是否需要调用外部工具才能完成用户请求。 */
-    @JsonPropertyDescription("是否需要调用外部工具；知识库搜索和文档统计为true，其余类型为false")
+    @JsonPropertyDescription("是否需要调用外部工具；知识库搜索、文档统计和复合任务为true，其余类型为false")
     private Boolean needTool;
 
     /** confidence：置信度，表示模型对本次分类有多确定，范围为0到1。 */

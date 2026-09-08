@@ -10,6 +10,9 @@ public enum QuestionIntent {
     /** 查询知识库中的文档数量或知识库规模。 */
     DOCUMENT_COUNT,
 
+    /** 一个问题包含两个或以上子任务，并且至少一个子任务需要知识库或文档统计。 */
+    COMPOSITE_TASK,
+
     /** 不依赖企业知识库也能回答的普通聊天或通用知识问题。 */
     GENERAL_CHAT,
 

@@ -14,6 +14,9 @@ public enum WorkflowNode {
     /** 根据意图和置信度决定执行分支。 */
     ROUTE_DECISION,
 
+    /** 复合任务专用：模型把用户目标拆成2到3个受约束步骤。 */
+    TASK_PLANNING,
+
     /** 执行知识检索、文档统计、普通聊天等具体分支。 */
     ROUTE_EXECUTION,
 

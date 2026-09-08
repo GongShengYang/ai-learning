@@ -77,6 +77,8 @@ gsy:
       memory-ms: 3000
       # 意图分类需要调用模型，最多等待30秒。
       intent-classification-ms: 30000
+      # 复合任务规划需要调用模型，最多等待30秒。
+      task-planning-ms: 30000
       # Java路由只是内存判断，正常应在1秒内完成。
       route-decision-ms: 1000
       # 知识检索和模型回答链路较长，最多等待60秒。
