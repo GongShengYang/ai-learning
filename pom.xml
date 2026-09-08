@@ -30,7 +30,8 @@
                 <scope>import</scope>
             </dependency>
 
-        </dependencies>
+    
+    </dependencies>
     </dependencyManagement>
 
     <dependencies>
@@ -130,6 +131,18 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-scratchpad</artifactId>
             <version>5.2.5</version>
+        </dependency>
+
+        <!-- MCP Server（Servlet传输） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+
+        <!-- MCP Client 核心库：手动构建客户端，避免同应用自连时启动期自动发现工具崩溃 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-mcp</artifactId>
         </dependency>
     </dependencies>
 

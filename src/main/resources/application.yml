@@ -11,12 +11,20 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
   ai:
+    mcp:
+      server:
+        name: ai-dome-mcp-server
+        version: 1.0.0
+        # 用于生成 MCP 消息回调地址，必须包含 Spring 的 /api 上下文路径。
+        base-url: http://localhost:8080/api
     openai:
       api-key: ${gsy.rag.llm.api-key}
+      # base-url: https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode
       base-url: https://dashscope.aliyuncs.com/compatible-mode
 
       chat:
         options:
+          # model: qwen3.8-max
           model: deepseek-v4-flash
 
       embedding:
@@ -63,6 +71,19 @@ logging:
 
 # 自定义配置
 gsy:
+  workflow:
+    timeout:
+      # 会话创建、历史读取和消息保存都是数据库操作，最多等待3秒。
+      memory-ms: 3000
+      # 意图分类需要调用模型，最多等待30秒。
+      intent-classification-ms: 30000
+      # Java路由只是内存判断，正常应在1秒内完成。
+      route-decision-ms: 1000
+      # 知识检索和模型回答链路较长，最多等待60秒。
+      route-execution-ms: 60000
+  mcp:
+    # MCP 服务根地址；具体 SSE 地址由客户端拼接为 /api/sse。
+    server-url: http://localhost:8080
   file:
     upload-path: D:/AiFile/file
     temporary-path: D:/AiFile/temporaryFile
@@ -76,7 +97,9 @@ gsy:
       api-key: ${DASHSCOPE_API_KEY}
 
     llm:
+      #api-key: ${WXZY_API_KEY}
       api-key: ${DASHSCOPE_API_KEY}
+      #api-key: ${DASHSCOPE_API_KEY}
       # 最大上下文长度（字符）
       max-context-length: 6000
 
