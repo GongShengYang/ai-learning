@@ -40,6 +40,21 @@ public class WorkflowContext {
     /** Executor按顺序保存每个计划步骤的结果，供最终汇总回答使用。 */
     private final List<WorkflowPlanStepResult> planStepResults = new ArrayList<>();
 
+    /**
+     * 本次回答实际使用过的知识库来源。
+     * 普通知识库问答和复合任务共用该列表，保证S1、S2等编号在一次回答内不重复。
+     */
+    private final List<WorkflowSource> sources = new ArrayList<>();
+
+    /** 最终回答的引用编号校验结果；非知识库路由保持为null。 */
+    private WorkflowCitationValidationResult citationValidation;
+
+    /**
+     * 第一次引用校验失败后保存具体原因，第二次生成时放进Prompt进行针对性纠正。
+     * 这是一次请求内部状态，不直接返回给前端。
+     */
+    private String citationCorrectionHint;
+
     /** 执行节点生成的最终回答。 */
     private String answer;
 

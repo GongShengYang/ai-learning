@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflow SSE 调试台</title>
+    <style>
+        :root { color-scheme: light; font-family: Inter, "Microsoft YaHei", sans-serif; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #f3f6fb; color: #182230; }
+        main { width: min(1100px, calc(100% - 32px)); margin: 32px auto; }
+        h1 { margin: 0 0 8px; font-size: 26px; }
+        .subtitle { margin: 0 0 24px; color: #667085; }
+        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+        .card { background: #fff; border: 1px solid #e4e7ec; border-radius: 14px; padding: 20px; box-shadow: 0 6px 24px rgba(16, 24, 40, .06); }
+        label { display: block; margin: 14px 0 6px; color: #344054; font-weight: 600; font-size: 14px; }
+        label:first-child { margin-top: 0; }
+        input, textarea { width: 100%; border: 1px solid #d0d5dd; border-radius: 8px; padding: 10px 12px; font: inherit; outline: none; }
+        input:focus, textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79, 70, 229, .12); }
+        textarea { min-height: 130px; resize: vertical; line-height: 1.6; }
+        .actions { display: flex; gap: 10px; margin-top: 16px; }
+        button { border: 0; border-radius: 8px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+        #sendButton { background: #4f46e5; color: #fff; }
+        #stopButton { background: #eef2f6; color: #344054; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .section-title h2 { margin: 0; font-size: 17px; }
+        #connectionStatus { color: #667085; font-size: 13px; }
+        #answer { min-height: 160px; padding: 14px; background: #f8fafc; border-radius: 9px; white-space: pre-wrap; line-height: 1.7; }
+        #sources { display: flex; flex-direction: column; gap: 9px; }
+        .source { padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #f8fafc; }
+        .source-title { margin-bottom: 5px; color: #344054; font-size: 13px; font-weight: 700; }
+        .source-preview { color: #667085; font-size: 13px; line-height: 1.55; }
+        .empty-source { color: #98a2b3; font-size: 13px; }
+        #events { max-height: 380px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+        .event { display: grid; grid-template-columns: 86px 1fr; gap: 10px; padding: 9px 11px; border: 1px solid #eaecf0; border-radius: 8px; font-size: 13px; }
+        .event-type { font-weight: 700; color: #475467; }
+        .SUCCESS { border-left: 4px solid #12b76a; }
+        .RUNNING { border-left: 4px solid #4f46e5; }
+        .FAILED { border-left: 4px solid #f04438; }
+        .error-text { color: #b42318; }
+        @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Workflow SSE 调试台</h1>
+    <p class="subtitle">观察节点状态、计划步骤和模型回答片段是否实时到达。</p>
+    <div class="grid">
+        <section class="card">
+            <label for="userId">用户 ID</label>
+            <input id="userId" type="number" min="1" value="1">
+            <label for="conversationId">会话 ID（新会话留空）</label>
+            <input id="conversationId" placeholder="完成后会自动回填">
+            <label for="question">问题</label>
+            <textarea id="question">请总结知识库中的请假制度，并告诉我知识库有多少篇文档。</textarea>
+            <div class="actions">
+                <button id="sendButton" type="button">发送</button>
+                <button id="stopButton" type="button" disabled>中断连接</button>
+            </div>
+        </section>
+        <div>
+            <section class="card">
+                <div class="section-title">
+                    <h2>流式回答</h2>
+                    <span id="connectionStatus">未连接</span>
+                </div>
+                <div id="answer">等待发送问题……</div>
+            </section>
+            <section class="card" style="margin-top: 20px;">
+                <div class="section-title"><h2>引用来源</h2></div>
+                <div id="sources"><span class="empty-source">知识库问题会在这里展示来源</span></div>
+            </section>
+            <section class="card" style="margin-top: 20px;">
+                <div class="section-title"><h2>执行事件</h2></div>
+                <div id="events"></div>
+            </section>
+        </div>
+    </div>
+</main>
+<script>
+    const sendButton = document.getElementById('sendButton');
+    const stopButton = document.getElementById('stopButton');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const answerElement = document.getElementById('answer');
+    const sourcesElement = document.getElementById('sources');
+    const eventsElement = document.getElementById('events');
+    // completed事件也会携带最终来源，用Set防止它和前面实时source事件重复展示。
+    const renderedSourceIds = new Set();
+    let abortController;
+
+    sendButton.addEventListener('click', startStream);
+    stopButton.addEventListener('click', () => abortController?.abort());
+
+    async function startStream() {
+        const userId = Number(document.getElementById('userId').value);
+        const conversationId = document.getElementById('conversationId').value.trim();
+        const question = document.getElementById('question').value.trim();
+        if (!userId || !question) {
+            alert('请填写有效的用户ID和问题');
+            return;
+        }
+
+        answerElement.textContent = '';
+        resetSources();
+        eventsElement.textContent = '';
+        connectionStatus.textContent = '连接中';
+        sendButton.disabled = true;
+        stopButton.disabled = false;
+        abortController = new AbortController();
+
+        try {
+            // EventSource只支持GET，这里使用fetch读取POST返回的ReadableStream。
+            const response = await fetch('ai/workflow/question/stream', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({userId, conversationId: conversationId || null, question}),
+                signal: abortController.signal
+            });
+            if (!response.ok || !response.body) {
+                throw new Error(`HTTP请求失败：${response.status}`);
+            }
+            connectionStatus.textContent = '接收中';
+            await readSseStream(response.body);
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                connectionStatus.textContent = '已主动中断';
+                appendEvent('client', '连接已由客户端主动中断', 'FAILED');
+            } else {
+                connectionStatus.textContent = '连接失败';
+                appendEvent('error', error.message, 'FAILED');
+            }
+        } finally {
+            sendButton.disabled = false;
+            stopButton.disabled = true;
+            abortController = undefined;
+        }
+    }
+
+    /** 网络分包位置不固定，因此先缓存文本，再按照SSE的空行边界拆出完整事件。 */
+    async function readSseStream(stream) {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
+            buffer = buffer.replace(/\r\n/g, '\n');
+
+            let boundary;
+            while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+                const eventBlock = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                handleSseEvent(eventBlock);
+            }
+            if (done) {
+                if (buffer.trim()) handleSseEvent(buffer);
+                break;
+            }
+        }
+    }
+
+    function handleSseEvent(eventBlock) {
+        let eventName = 'message';
+        const dataLines = [];
+        for (const line of eventBlock.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+        }
+        if (!dataLines.length) return;
+
+        const rawData = dataLines.join('\n');
+        let data;
+        try {
+            data = JSON.parse(rawData);
+        } catch {
+            data = {message: rawData};
+        }
+
+        // 后端同时在SSE的event字段和JSON的type字段中标记类型。
+        // 某些客户端或代理只保留data，因此优先读取data.type，避免content事件被当成普通message忽略。
+        const eventType = data.type || eventName;
+
+        if (eventType === 'content') {
+            answerElement.textContent += data.content ?? '';
+            return;
+        }
+        if (eventType === 'route-output-reset') {
+            // 路由重试时，上一次已经流出的半段回答和来源都已失效，不能和新结果混在一起。
+            answerElement.textContent = '';
+            resetSources();
+            return;
+        }
+        if (eventType === 'source') {
+            renderSource(data.source);
+            return;
+        }
+        if (eventType === 'node') {
+            appendEvent('节点', `${data.node} / 第${data.attempt}次 / ${data.message}`, data.status);
+            return;
+        }
+        if (eventType === 'plan-step') {
+            appendEvent('计划步骤', `${data.stepNumber}. ${data.action} / ${data.message}`, data.status);
+            return;
+        }
+        if (eventType === 'completed') {
+            connectionStatus.textContent = '已完成';
+            if (data.conversationId) document.getElementById('conversationId').value = data.conversationId;
+            // 这是兜底：即使中间source事件被代理遗漏，最终响应仍可恢复完整来源列表。
+            (data.sources || []).forEach(renderSource);
+            appendCitationValidation(data.citationValidation);
+            appendEvent('完成', `Workflow状态：${data.status}`, data.status);
+            return;
+        }
+        if (eventType === 'error') {
+            connectionStatus.textContent = '执行失败';
+            const message = data.errorMessage || data.message || data.answer || '未知错误';
+            // Workflow失败响应中可能包含后端生成的降级回答，用它替换不完整的流式片段。
+            if (data.answer) answerElement.textContent = data.answer;
+            appendCitationValidation(data.citationValidation);
+            appendEvent('错误', message, 'FAILED');
+        }
+    }
+
+    /** 引用校验在最终回答生成后执行，因此随completed或error最终事件一起展示。 */
+    function appendCitationValidation(validation) {
+        if (!validation) return;
+        const citedText = validation.citedSourceIds?.length
+            ? `，实际引用：${validation.citedSourceIds.join('、')}` : '';
+        appendEvent('引用校验', `${validation.message}${citedText}`,
+            validation.passed ? 'SUCCESS' : 'FAILED');
+    }
+
+    function resetSources() {
+        renderedSourceIds.clear();
+        sourcesElement.textContent = '';
+        const emptyElement = document.createElement('span');
+        emptyElement.className = 'empty-source';
+        emptyElement.textContent = '本次回答暂时没有知识库来源';
+        sourcesElement.appendChild(emptyElement);
+    }
+
+    /** 使用textContent创建元素，来源正文即使包含HTML标签也只会按普通文字显示。 */
+    function renderSource(source) {
+        if (!source?.sourceId || renderedSourceIds.has(source.sourceId)) return;
+        renderedSourceIds.add(source.sourceId);
+        sourcesElement.querySelector('.empty-source')?.remove();
+
+        const sourceElement = document.createElement('div');
+        sourceElement.className = 'source';
+        const titleElement = document.createElement('div');
+        titleElement.className = 'source-title';
+        const stepText = source.planStepNumber == null ? '' : ` / 计划步骤${source.planStepNumber}`;
+        titleElement.textContent = `${source.sourceId} / 文档${source.documentId} / 切片${source.chunkIndex}${stepText} / 相似度${source.similarity}`;
+        const previewElement = document.createElement('div');
+        previewElement.className = 'source-preview';
+        previewElement.textContent = source.contentPreview || '无内容摘要';
+        sourceElement.append(titleElement, previewElement);
+        sourcesElement.appendChild(sourceElement);
+    }
+
+    function appendEvent(type, message, status) {
+        const row = document.createElement('div');
+        row.className = `event ${status || ''}`;
+        const typeElement = document.createElement('div');
+        typeElement.className = 'event-type';
+        typeElement.textContent = type;
+        const messageElement = document.createElement('div');
+        messageElement.textContent = message;
+        if (status === 'FAILED') messageElement.className = 'error-text';
+        row.append(typeElement, messageElement);
+        eventsElement.appendChild(row);
+        eventsElement.scrollTop = eventsElement.scrollHeight;
+    }
+</script>
+</body>
+</html>

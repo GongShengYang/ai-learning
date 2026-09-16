@@ -3,8 +3,10 @@ package com.gsy.ai.workflow.dto;
 import com.gsy.ai.structuredoutput.enums.QuestionIntent;
 import com.gsy.ai.workflow.enums.WorkflowNode;
 import com.gsy.ai.workflow.enums.WorkflowStatus;
+import com.gsy.ai.workflow.model.WorkflowCitationValidationResult;
 import com.gsy.ai.workflow.model.WorkflowPlan;
 import com.gsy.ai.workflow.model.WorkflowPlanStepResult;
+import com.gsy.ai.workflow.model.WorkflowSource;
 import com.gsy.ai.workflow.model.WorkflowStepRecord;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -32,6 +34,12 @@ public class WorkflowQuestionResponse {
 
     /** 复合任务每一步的实际执行结果；普通问题返回空列表。 */
     private List<WorkflowPlanStepResult> planStepResults;
+
+    /** 本次回答生成前检索到的知识库来源；非知识库问题返回空列表。 */
+    private List<WorkflowSource> sources;
+
+    /** 引用编号校验结果；普通聊天和文档统计等非知识库回答为null。 */
+    private WorkflowCitationValidationResult citationValidation;
 
     /** 整个Workflow最终状态。 */
     private WorkflowStatus status;
