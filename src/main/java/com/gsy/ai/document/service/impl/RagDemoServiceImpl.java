@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
@@ -69,23 +70,29 @@ public class RagDemoServiceImpl implements RagDemoService {
         // 5. 调用 LLM
         String answer = callLLM(question, context);
         log.info("RAG回答生成成功，长度: {}", answer.length());
-        List<RagSourceInfo> sources =
-                chunks.stream()
-                        .map(item ->
-                                new RagSourceInfo(
-                                        item.getChunkId(),
-                                        item.getDocumentId(),
-                                        item.getChunkIndex(),
-                                        item.getScore(),
-                                        item.getContent()
-                                )
-                        )
-                        .toList();
+        // 把检索结果转换成接口返回的来源信息，转换细节放在单独方法中。
+        List<RagSourceInfo> sources = buildSourceList(chunks);
 
         return new RagAnswerResponse(
                 answer,
                 sources
         );
+    }
+
+    /** 将向量检索结果逐条转换成前端需要的来源数据。 */
+    private List<RagSourceInfo> buildSourceList(List<ChunkWithVector> chunks) {
+        List<RagSourceInfo> sources = new ArrayList<>();
+        for (ChunkWithVector chunk : chunks) {
+            RagSourceInfo source = new RagSourceInfo(
+                    chunk.getChunkId(),
+                    chunk.getDocumentId(),
+                    chunk.getChunkIndex(),
+                    chunk.getScore(),
+                    chunk.getContent()
+            );
+            sources.add(source);
+        }
+        return sources;
     }
 
     private String buildContext(List<ChunkWithVector> chunks) {

@@ -125,8 +125,14 @@ public class WorkflowPlannerServiceImpl implements WorkflowPlannerService {
                 throw new BusinessException("计划步骤instruction不能为空且不能超过500个字符");
             }
         }
-        boolean hasToolStep = steps.stream()
-                .anyMatch(step -> step.getAction() != WorkflowPlanAction.GENERAL_CHAT);
+        // 普通循环比anyMatch Lambda更适合在IDE中逐步调试，也能直接看到判断过程。
+        boolean hasToolStep = false;
+        for (WorkflowPlanStep step : steps) {
+            if (step.getAction() != WorkflowPlanAction.GENERAL_CHAT) {
+                hasToolStep = true;
+                break;
+            }
+        }
         if (!hasToolStep) {
             throw new BusinessException("复合任务计划至少需要一个知识库或文档统计步骤");
         }

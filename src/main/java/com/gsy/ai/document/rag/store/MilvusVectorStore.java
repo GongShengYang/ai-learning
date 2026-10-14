@@ -22,8 +22,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Primary
@@ -274,20 +272,8 @@ public class MilvusVectorStore implements VectorStore {
             return List.of();
         }
 
-        Map<Long, DocumentChunkDO> chunkDOMap =
-                chunkDOList.stream()
-                        .filter(
-                                Objects::nonNull
-                        )
-                        .collect(
-                                Collectors.toMap(
-                                        DocumentChunkDO::getId,
-                                        item -> item,
-                                        (oldValue, newValue) ->
-                                                oldValue,
-                                        HashMap::new
-                                )
-                        );
+        // 转成Map后，可以按Milvus返回的chunkId快速找到MySQL记录。
+        Map<Long, DocumentChunkDO> chunkDOMap = buildChunkMap(chunkDOList);
 
         List<ChunkWithVector> result =
                 new ArrayList<>();
@@ -349,6 +335,21 @@ public class MilvusVectorStore implements VectorStore {
         }
 
         return result;
+    }
+
+    /**
+     * 将MySQL查询结果转换成“chunkId -> Chunk”的Map。
+     * putIfAbsent表示出现重复ID时保留第一条，等价于原Collectors.toMap中的合并规则。
+     */
+    private Map<Long, DocumentChunkDO> buildChunkMap(List<DocumentChunkDO> chunkDOList) {
+        Map<Long, DocumentChunkDO> chunkDOMap = new HashMap<>();
+        for (DocumentChunkDO chunkDO : chunkDOList) {
+            if (chunkDO == null) {
+                continue;
+            }
+            chunkDOMap.putIfAbsent(chunkDO.getId(), chunkDO);
+        }
+        return chunkDOMap;
     }
 
     /**

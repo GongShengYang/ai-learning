@@ -140,30 +140,21 @@ public class WorkflowServiceImpl implements WorkflowService {
         try {
             context.setStatus(WorkflowStatus.RUNNING);
 
+            // 主流程只写“执行哪个节点”。节点对应的实际业务方法统一放在executeNodeAction中。
             // 先读取历史，再保存当前问题，避免当前问题同时出现在history和.user(question)中。
-            /** 创建新会话或校验已有会话归属，然后读取本轮问题之前的最近20条消息。 */
-            executeNode(context, WorkflowNode.CONVERSATION_PREPARATION,
-                    () -> prepareConversation(context), eventListener);
-            /** 在调用模型前保存用户真实提交的问题，模型失败时仍保留这条用户消息。 */
-            executeNode(context, WorkflowNode.USER_MESSAGE_PERSISTENCE, () -> saveUserMessage(context), eventListener);
-            /** 结合最近对话判断当前问题的意图，使“那它有多少个？”这类追问也能被理解。 */
-            executeNode(context, WorkflowNode.INTENT_CLASSIFICATION,
-                    () -> classifyIntent(context), eventListener);
-            /** 根据意图和置信度，由Java确定唯一执行分支。 */
-            executeNode(context, WorkflowNode.ROUTE_DECISION,
-                    () -> decideRoute(context), eventListener);
+            executeNode(context, WorkflowNode.CONVERSATION_PREPARATION, eventListener, streamAnswer);
+            executeNode(context, WorkflowNode.USER_MESSAGE_PERSISTENCE, eventListener, streamAnswer);
+            executeNode(context, WorkflowNode.INTENT_CLASSIFICATION, eventListener, streamAnswer);
+            executeNode(context, WorkflowNode.ROUTE_DECISION, eventListener, streamAnswer);
             // 普通问题已经有唯一分支，不需要额外调用Planner，避免增加延迟和Token消耗。
             if (context.getRoute() == QuestionIntent.COMPOSITE_TASK) {
-                /** 复合任务由模型拆成2到3步，再由Java校验动作白名单。 */
-                executeNode(context, WorkflowNode.TASK_PLANNING,
-                        () -> createPlan(context), eventListener);
+                // 复合任务由模型拆成2到3步，再由Java校验动作白名单。
+                executeNode(context, WorkflowNode.TASK_PLANNING, eventListener, streamAnswer);
             }
-            /** 普通任务执行唯一分支；复合任务由Executor依次执行计划中的步骤。 */
-            executeNode(context, WorkflowNode.ROUTE_EXECUTION,
-                    () -> executeRoute(context, eventListener, streamAnswer), eventListener);
-            /** 只在回答成功生成后保存助手消息，并更新会话最后活跃时间。 */
-            executeNode(context, WorkflowNode.ASSISTANT_MESSAGE_PERSISTENCE,
-                    () -> saveAssistantMessage(context), eventListener);
+            // 普通任务执行唯一分支；复合任务由Executor依次执行计划中的步骤。
+            executeNode(context, WorkflowNode.ROUTE_EXECUTION, eventListener, streamAnswer);
+            // 只在回答成功生成后保存助手消息，并更新会话最后活跃时间。
+            executeNode(context, WorkflowNode.ASSISTANT_MESSAGE_PERSISTENCE, eventListener, streamAnswer);
 
             context.setStatus(WorkflowStatus.SUCCESS);
             context.setCurrentNode(null);
@@ -213,8 +204,8 @@ public class WorkflowServiceImpl implements WorkflowService {
      * 节点执行模板：统一记录每次尝试、超时和失败信息。
      * 当前ROUTE_EXECUTION都是查询或模型回答，因此普通异常可以重试；写入消息的节点不重试。
      */
-    private void executeNode(WorkflowContext context, WorkflowNode node, Runnable action,
-                             WorkflowStreamEventListener eventListener) {
+    private void executeNode(WorkflowContext context, WorkflowNode node,
+                             WorkflowStreamEventListener eventListener, boolean streamAnswer) {
         int maxAttempts = getMaxAttempts(context, node);
         long timeoutMs = getNodeTimeoutMillis(node);
         context.setCurrentNode(node);
@@ -231,7 +222,7 @@ public class WorkflowServiceImpl implements WorkflowService {
             long startNanos = System.nanoTime();
 
             try {
-                runWithTimeout(action, timeoutMs);
+                runWithTimeout(context, node, eventListener, streamAnswer, timeoutMs);
                 record.setStatus(WorkflowStatus.SUCCESS);
                 record.setDurationMs(elapsedMillis(startNanos));
                 record.setMessage("节点执行成功");
@@ -266,11 +257,33 @@ public class WorkflowServiceImpl implements WorkflowService {
     }
 
     /**
+     * 明确写出“节点枚举 -> 业务方法”的对应关系。
+     * 以前由调用方传入Runnable Lambda，阅读时必须跳到executeNode参数才能知道它会执行什么；
+     * 现在只要看这个switch，就能找到每一个Workflow节点真正调用的方法。
+     */
+    private void executeNodeAction(WorkflowContext context, WorkflowNode node,
+                                   WorkflowStreamEventListener eventListener, boolean streamAnswer) {
+        switch (node) {
+            case CONVERSATION_PREPARATION -> prepareConversation(context);
+            case USER_MESSAGE_PERSISTENCE -> saveUserMessage(context);
+            case INTENT_CLASSIFICATION -> classifyIntent(context);
+            case ROUTE_DECISION -> decideRoute(context);
+            case TASK_PLANNING -> createPlan(context);
+            case ROUTE_EXECUTION -> executeRoute(context, eventListener, streamAnswer);
+            case ASSISTANT_MESSAGE_PERSISTENCE -> saveAssistantMessage(context);
+        }
+    }
+
+    /**
      * 在线程池中执行节点，并只等待配置的最长时间。
      * cancel(true)只发送中断信号，生产环境仍需配置HTTP、数据库和向量库自身的底层超时。
      */
-    private void runWithTimeout(Runnable action, long timeoutMs) {
-        Future<?> future = workflowNodeExecutor.submit(action);
+    private void runWithTimeout(WorkflowContext context, WorkflowNode node,
+                                WorkflowStreamEventListener eventListener, boolean streamAnswer,
+                                long timeoutMs) {
+        // 线程池要求提交Runnable。这里使用有名字的任务类，避免把业务动作藏在Lambda中。
+        WorkflowNodeTask nodeTask = new WorkflowNodeTask(context, node, eventListener, streamAnswer);
+        Future<?> future = workflowNodeExecutor.submit(nodeTask);
         try {
             future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -670,9 +683,13 @@ public class WorkflowServiceImpl implements WorkflowService {
             citedSourceIds.add(matcher.group(1));
         }
 
-        List<String> invalidSourceIds = citedSourceIds.stream()
-                .filter(sourceId -> !availableSourceIds.contains(sourceId))
-                .toList();
+        // 使用普通循环列出无效编号，更便于调试时逐行观察availableSourceIds和sourceId。
+        List<String> invalidSourceIds = new ArrayList<>();
+        for (String sourceId : citedSourceIds) {
+            if (!availableSourceIds.contains(sourceId)) {
+                invalidSourceIds.add(sourceId);
+            }
+        }
         if (citedSourceIds.isEmpty()) {
             failCitationValidation(context, List.of(), List.of(),
                     "回答使用了知识库资料，但没有标注任何[S编号]来源");
@@ -733,12 +750,14 @@ public class WorkflowServiceImpl implements WorkflowService {
         }
         Flux<String> contentFlux = requestSpec.stream().content();
         StringBuilder fullAnswer = new StringBuilder();
-        contentFlux.doOnNext(content -> {
+        // toIterable会等待并逐个取得模型返回的文本片段，效果等同于原来的doOnNext(...).blockLast()。
+        // 普通for循环可以直接看出每收到一个片段，就会先拼接完整回答，再通知SSE前端。
+        for (String content : contentFlux.toIterable()) {
             if (StringUtils.hasLength(content)) {
                 fullAnswer.append(content);
                 eventListener.onEvent(WorkflowStreamEvent.content(content));
             }
-        }).blockLast();
+        }
         return fullAnswer.toString();
     }
 
@@ -767,6 +786,30 @@ public class WorkflowServiceImpl implements WorkflowService {
         }
         if (question.length() > MAX_QUESTION_LENGTH) {
             throw new BusinessException("问题长度不能超过5000个字符");
+        }
+    }
+
+    /**
+     * 一个节点在线程池中的实际任务。
+     * 它只负责保存执行节点所需的参数，run()被线程池调用后，再进入上面的executeNodeAction。
+     */
+    private final class WorkflowNodeTask implements Runnable {
+        private final WorkflowContext context;
+        private final WorkflowNode node;
+        private final WorkflowStreamEventListener eventListener;
+        private final boolean streamAnswer;
+
+        private WorkflowNodeTask(WorkflowContext context, WorkflowNode node,
+                                 WorkflowStreamEventListener eventListener, boolean streamAnswer) {
+            this.context = context;
+            this.node = node;
+            this.eventListener = eventListener;
+            this.streamAnswer = streamAnswer;
+        }
+
+        @Override
+        public void run() {
+            executeNodeAction(context, node, eventListener, streamAnswer);
         }
     }
 }

@@ -6,6 +6,7 @@ import com.gsy.ai.workflow.dto.WorkflowQuestionResponse;
 import com.gsy.ai.workflow.dto.WorkflowStreamEvent;
 import com.gsy.ai.workflow.enums.WorkflowStatus;
 import com.gsy.ai.workflow.service.WorkflowService;
+import com.gsy.ai.workflow.service.WorkflowStreamEventListener;
 import jakarta.annotation.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -60,41 +61,14 @@ public class WorkflowController {
         // 保存后台完整Workflow任务的Future，连接断开时可以通过cancel(true)尝试中断它。
         AtomicReference<Future<?>> taskReference = new AtomicReference<>();
 
-        /*
-         * onCompletion：SSE请求生命周期彻底结束时触发。
-         * 正常执行完调用emitter.complete()会触发；浏览器提前断开也可能触发。
-         * 如果业务还没有finished，说明属于提前结束，需要尝试取消后台Workflow。
-         */
-        emitter.onCompletion(() -> {
-            closed.set(true);
-            if (!finished.get()) {
-                cancelTask(taskReference);
-            }
-        });
-
-        /*
-         * onTimeout：SseEmitter超过SSE_TIMEOUT_MS仍未结束时触发。
-         * 此时连接已经不能继续无限等待，所以标记关闭、取消后台任务并结束Emitter。
-         */
-        emitter.onTimeout(() -> {
-            closed.set(true);
-            cancelTask(taskReference);
-            emitter.complete();
-        });
-
-        /*
-         * onError：向客户端写数据时发生网络异常等错误时触发。
-         * 前端已经收不到后续内容，继续运行Workflow只会浪费资源，因此尝试取消后台任务。
-         */
-        emitter.onError(error -> {
-            closed.set(true);
-            cancelTask(taskReference);
-        });
+        // 这里只负责注册回调，完成、超时和异常分别如何处理，都放在有名字的方法中。
+        registerEmitterCallbacks(emitter, closed, finished, taskReference);
 
         try {
             // 把完整Workflow提交到后台，Controller随后立刻return emitter，不等待模型回答完成。
-            Future<?> task = workflowRequestExecutor.submit(() -> runStreamWorkflow(
-                    request, emitter, closed, finished, taskReference));
+            StreamWorkflowTask streamTask = new StreamWorkflowTask(
+                    request, emitter, closed, finished, taskReference);
+            Future<?> task = workflowRequestExecutor.submit(streamTask);
             // 保存Future，供上面的完成、超时和异常回调取消任务。
             taskReference.set(task);
         } catch (RejectedExecutionException e) {
@@ -105,17 +79,57 @@ public class WorkflowController {
         return emitter;
     }
 
+    /**
+     * 给SseEmitter登记三个生命周期回调。
+     * 登记不等于现在执行：Spring会在连接真正完成、超时或出错时，再调用对应方法。
+     * Lambda这里只转发参数，没有隐藏具体业务判断，实际处理逻辑都在下面三个方法中。
+     */
+    private void registerEmitterCallbacks(SseEmitter emitter, AtomicBoolean closed,
+                                          AtomicBoolean finished,
+                                          AtomicReference<Future<?>> taskReference) {
+        emitter.onCompletion(() -> handleEmitterCompletion(closed, finished, taskReference));
+        emitter.onTimeout(() -> handleEmitterTimeout(emitter, closed, taskReference));
+        emitter.onError(error -> handleEmitterError(closed, taskReference, error));
+    }
+
+    /** SSE正常结束或客户端提前断开时，由Spring回调该方法。 */
+    private void handleEmitterCompletion(AtomicBoolean closed, AtomicBoolean finished,
+                                         AtomicReference<Future<?>> taskReference) {
+        closed.set(true);
+        // Workflow尚未执行完成，说明连接属于提前结束，应尝试取消后台任务。
+        if (!finished.get()) {
+            cancelTask(taskReference);
+        }
+    }
+
+    /** SSE超过五分钟仍未结束时，由Spring回调该方法。 */
+    private void handleEmitterTimeout(SseEmitter emitter, AtomicBoolean closed,
+                                      AtomicReference<Future<?>> taskReference) {
+        closed.set(true);
+        cancelTask(taskReference);
+        emitter.complete();
+    }
+
+    /** 网络断开或发送事件失败时，由Spring回调该方法。 */
+    private void handleEmitterError(AtomicBoolean closed, AtomicReference<Future<?>> taskReference,
+                                    Throwable error) {
+        closed.set(true);
+        cancelTask(taskReference);
+    }
+
     /** 在线程池中执行完整Workflow，Servlet线程可以立即返回SSE连接。 */
     private void runStreamWorkflow(WorkflowQuestionRequest request, SseEmitter emitter,
                                    AtomicBoolean closed, AtomicBoolean finished,
                                    AtomicReference<Future<?>> taskReference) {
         try {
+            // 使用有名字的监听器对象接收Service事件，避免把SSE发送逻辑藏在Lambda参数中。
+            SseWorkflowEventListener eventListener = new SseWorkflowEventListener(
+                    emitter, closed, taskReference);
             WorkflowQuestionResponse response = workflowService.answerWithEvents(
                     request == null ? null : request.getUserId(),
                     request == null ? null : request.getConversationId(),
                     request == null ? null : request.getQuestion(),
-                    // 这个Lambda就是eventListener.onEvent(event)被调用时真正执行的代码。
-                    event -> sendWorkflowEvent(emitter, closed, taskReference, event));
+                    eventListener);
 
             // Service返回说明整个Workflow结束；根据最终状态发送completed或error事件。
             String eventName = response.getStatus() == WorkflowStatus.SUCCESS ? "completed" : "error";
@@ -159,6 +173,52 @@ public class WorkflowController {
         if (task != null && !task.isDone()) {
             // true表示向执行线程发送interrupt；它是尽力取消，不能强制杀死底层模型HTTP请求。
             task.cancel(true);
+        }
+    }
+
+    /**
+     * 线程池中执行的完整流式Workflow任务。
+     * Controller先创建该对象，再把它交给线程池；线程池随后会自动调用run()。
+     */
+    private final class StreamWorkflowTask implements Runnable {
+        private final WorkflowQuestionRequest request;
+        private final SseEmitter emitter;
+        private final AtomicBoolean closed;
+        private final AtomicBoolean finished;
+        private final AtomicReference<Future<?>> taskReference;
+
+        private StreamWorkflowTask(WorkflowQuestionRequest request, SseEmitter emitter,
+                                   AtomicBoolean closed, AtomicBoolean finished,
+                                   AtomicReference<Future<?>> taskReference) {
+            this.request = request;
+            this.emitter = emitter;
+            this.closed = closed;
+            this.finished = finished;
+            this.taskReference = taskReference;
+        }
+
+        @Override
+        public void run() {
+            runStreamWorkflow(request, emitter, closed, finished, taskReference);
+        }
+    }
+
+    /** Service调用onEvent()时，把Workflow事件转交给Controller写入SSE连接。 */
+    private final class SseWorkflowEventListener implements WorkflowStreamEventListener {
+        private final SseEmitter emitter;
+        private final AtomicBoolean closed;
+        private final AtomicReference<Future<?>> taskReference;
+
+        private SseWorkflowEventListener(SseEmitter emitter, AtomicBoolean closed,
+                                         AtomicReference<Future<?>> taskReference) {
+            this.emitter = emitter;
+            this.closed = closed;
+            this.taskReference = taskReference;
+        }
+
+        @Override
+        public void onEvent(WorkflowStreamEvent event) {
+            sendWorkflowEvent(emitter, closed, taskReference, event);
         }
     }
 }

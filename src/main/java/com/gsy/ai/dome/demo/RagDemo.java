@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Scanner;
-import java.util.stream.Collectors;
 
 public class RagDemo {
     public static final String API_KEY = "sk-cad1be71e0274f8cae49c0e2cf124c36";
@@ -122,14 +121,17 @@ public class RagDemo {
         }
         // 如果没有空行分隔，退化为按单个换行切分
         if (documentChunkList.size() <= 1 && text.contains("\n")) {
-            documentChunkList = Arrays.stream(normalized.split("\n"))
-                    .filter(s -> !s.isEmpty())
-                    .map(s-> {
-                        DocumentChunk documentChunk = new DocumentChunk();
-                        documentChunk.setContent(s.trim());
-                        return documentChunk;
-                    })
-                    .collect(Collectors.toList());
+            // 使用普通循环逐行创建DocumentChunk，方便在IDE中逐步查看每一个切片。
+            List<DocumentChunk> lineChunks = new ArrayList<>();
+            for (String line : normalized.split("\n")) {
+                if (line.isEmpty()) {
+                    continue;
+                }
+                DocumentChunk documentChunk = new DocumentChunk();
+                documentChunk.setContent(line.trim());
+                lineChunks.add(documentChunk);
+            }
+            documentChunkList = lineChunks;
         }
         return documentChunkList;
     }
@@ -187,12 +189,18 @@ public class RagDemo {
             }
             list.add(new SimItem(i, sim));
         }
-        list.sort((a, b) -> Float.compare(b.sim, a.sim));
+        // 排序规则提取成有名字的方法：相似度越高，位置越靠前。
+        list.sort(RagDemo::compareBySimilarityDescending);
         List<Integer> result = new ArrayList<>();
         for (int i = 0; i < Math.min(k, list.size()); i++) {
             result.add(list.get(i).idx);
         }
         return result;
+    }
+
+    /** 按相似度从高到低排序。 */
+    private static int compareBySimilarityDescending(SimItem first, SimItem second) {
+        return Float.compare(second.sim, first.sim);
     }
 
     static class SimItem {
